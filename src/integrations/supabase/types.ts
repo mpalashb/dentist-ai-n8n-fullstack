@@ -6,12 +6,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
-export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "13.0.5"
-  }
+export interface Database {
   public: {
     Tables: {
       profiles: {
@@ -62,6 +57,62 @@ export type Database = {
           marketing_emails?: boolean
           two_factor_auth?: boolean
           login_alerts?: boolean
+        }
+      }
+      voice_records: {
+        Row: {
+          id: string
+          profile_id: string
+          created_at: string
+          updated_at: string
+          title: string
+          description: string | null
+          file_url: string
+          file_size: number | null
+          duration: number | null
+          transcript: string | null
+          language: string | null
+          tags: string[] | null
+          is_public: boolean
+          is_processed: boolean
+          processing_status: string | null
+          metadata: Json | null
+        }
+        Insert: {
+          id?: string
+          profile_id: string
+          created_at?: string
+          updated_at?: string
+          title: string
+          description?: string | null
+          file_url: string
+          file_size?: number | null
+          duration?: number | null
+          transcript?: string | null
+          language?: string | null
+          tags?: string[] | null
+          is_public?: boolean
+          is_processed?: boolean
+          processing_status?: string | null
+          metadata?: Json | null
+        }
+        Update: {
+          id?: string
+          profile_id?: string
+          created_at?: string
+          updated_at?: string
+          title?: string
+          description?: string | null
+          file_url?: string
+          file_size?: number | null
+          duration?: number | null
+          transcript?: string | null
+          language?: string | null
+          tags?: string[] | null
+          is_public?: boolean
+          is_processed?: boolean
+          processing_status?: string | null
+          metadata?: Json | null
         }
       }
     }

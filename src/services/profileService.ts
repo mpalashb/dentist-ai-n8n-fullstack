@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { supabaseService } from "@/integrations/supabase/service-client";
 
 export type Profile = {
   id: string;
@@ -24,23 +25,41 @@ export type Profile = {
  */
 export const getProfile = async (userId: string): Promise<Profile | null> => {
   try {
-    const { data, error } = await (supabase as any)
-      .from("profiles")
-      .select("*")
-      .eq("id", userId)
-      .single();
+    const { data, error } = await supabase.functions.invoke('get-profile', {
+      body: { userId }
+    });
 
     if (error) {
-      // If the error is PGRST116 (no rows returned), return null instead of throwing
-      if (error.code === "PGRST116") {
-        return null;
-      }
+      console.error("Error fetching profile via edge function:", error);
       throw error;
     }
 
-    return data as Profile;
+    return data?.profile as Profile || null;
   } catch (error) {
     console.error("Error fetching profile:", error);
+    throw error;
+  }
+};
+
+/**
+ * Get a user's profile by ID using edge function
+ * @param userId The user ID
+ * @returns The profile data or null if not found
+ */
+export const getProfileViaEdgeFunction = async (userId: string): Promise<Profile | null> => {
+  try {
+    const { data, error } = await supabase.functions.invoke('get-profile', {
+      body: { userId }
+    });
+
+    if (error) {
+      console.error("Error fetching profile via edge function:", error);
+      throw error;
+    }
+
+    return data?.profile as Profile || null;
+  } catch (error) {
+    console.error("Error fetching profile via edge function:", error);
     throw error;
   }
 };
@@ -54,29 +73,16 @@ export const createProfile = async (
   profile: Omit<Profile, "updated_at">
 ): Promise<Profile> => {
   try {
-    const { data, error } = await (supabase as any)
-      .from("profiles")
-      .insert([profile])
-      .select()
-      .single();
+    const { data, error } = await supabase.functions.invoke('create-profile', {
+      body: { profile }
+    });
 
     if (error) {
-      // If the error is a duplicate key error (profile already exists), fetch the existing profile
-      if (error.code === "23505") {
-        const { data: existingProfile } = await (supabase as any)
-          .from("profiles")
-          .select("*")
-          .eq("id", profile.id)
-          .single();
-          
-        if (existingProfile) {
-          return existingProfile as Profile;
-        }
-      }
+      console.error("Error creating profile via edge function:", error);
       throw error;
     }
 
-    return data as Profile;
+    return data?.profile as Profile;
   } catch (error) {
     console.error("Error creating profile:", error);
     throw error;
@@ -94,39 +100,16 @@ export const updateProfile = async (
   updates: Partial<Omit<Profile, "id" | "updated_at">>
 ): Promise<Profile> => {
   try {
-    const { data, error } = await (supabase as any)
-      .from("profiles")
-      .update(updates)
-      .eq("id", userId)
-      .select()
-      .single();
+    const { data, error } = await supabase.functions.invoke('update-profile', {
+      body: { userId, updates }
+    });
 
     if (error) {
-      // If the error is PGRST116 (no rows returned), create the profile first
-      if (error.code === "PGRST116") {
-        const newProfile: Omit<Profile, "updated_at"> = {
-          id: userId,
-          username: null,
-          full_name: null,
-          avatar_url: null,
-          website: null,
-          phone: null,
-          bio: null,
-          location: null,
-          email_notifications: true,
-          sms_notifications: false,
-          marketing_emails: true,
-          two_factor_auth: false,
-          login_alerts: true,
-          ...updates,
-        };
-        
-        return await createProfile(newProfile);
-      }
+      console.error("Error updating profile via edge function:", error);
       throw error;
     }
 
-    return data as Profile;
+    return data?.profile as Profile;
   } catch (error) {
     console.error("Error updating profile:", error);
     throw error;
@@ -140,16 +123,16 @@ export const updateProfile = async (
  */
 export const deleteProfile = async (userId: string): Promise<boolean> => {
   try {
-    const { error } = await (supabase as any)
-      .from("profiles")
-      .delete()
-      .eq("id", userId);
+    const { data, error } = await supabase.functions.invoke('delete-profile', {
+      body: { userId }
+    });
 
     if (error) {
+      console.error("Error deleting profile via edge function:", error);
       throw error;
     }
 
-    return true;
+    return data?.success || false;
   } catch (error) {
     console.error("Error deleting profile:", error);
     throw error;
@@ -162,17 +145,66 @@ export const deleteProfile = async (userId: string): Promise<boolean> => {
  */
 export const getAllProfiles = async (): Promise<Profile[]> => {
   try {
-    const { data, error } = await (supabase as any)
-      .from("profiles")
-      .select("*");
+    const { data, error } = await supabase.functions.invoke('get-all-profiles');
 
     if (error) {
+      console.error("Error fetching all profiles via edge function:", error);
       throw error;
     }
 
-    return data as Profile[];
+    return data?.profiles as Profile[] || [];
   } catch (error) {
     console.error("Error fetching all profiles:", error);
+    throw error;
+  }
+};
+
+/**
+ * Upload a profile picture using the edge function
+ * @param file The file to upload
+ * @param userId The user ID
+ * @returns The public URL of the uploaded file
+ */
+export const uploadAvatar = async (file: File, userId: string): Promise<string> => {
+  try {
+    const formData = new FormData();
+    formData.append('avatar', file);
+    
+    const { data, error } = await supabase.functions.invoke('upload-avatar', {
+      body: formData,
+    });
+
+    if (error) {
+      console.error("Error uploading avatar via edge function:", error);
+      throw error;
+    }
+
+    return data?.avatarUrl as string;
+  } catch (error) {
+    console.error("Error uploading avatar:", error);
+    throw error;
+  }
+};
+
+/**
+ * Delete a profile picture using the edge function
+ * @param avatarUrl The URL of the avatar to delete
+ * @returns True if deletion was successful
+ */
+export const deleteAvatar = async (avatarUrl: string): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase.functions.invoke('delete-avatar', {
+      body: { avatarUrl },
+    });
+
+    if (error) {
+      console.error("Error deleting avatar via edge function:", error);
+      throw error;
+    }
+
+    return data?.success || false;
+  } catch (error) {
+    console.error("Error deleting avatar:", error);
     throw error;
   }
 };

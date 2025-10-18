@@ -25,41 +25,19 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
+import { useProfile } from "@/contexts/ProfileContext";
 import { useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useTheme } from "next-themes";
-import { getProfile, type Profile } from "@/services/profileService";
 
 export const DashboardHeader = () => {
   const { user, signOut } = useAuth();
+  const { profile } = useProfile();
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
-  const [profile, setProfile] = useState<Profile | null>(null);
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      if (user?.id) {
-        try {
-          const profileData = await getProfile(user.id);
-          setProfile(profileData);
-        } catch (error) {
-          console.error("Error fetching profile:", error);
-        }
-      }
-    };
-
-    fetchProfile();
-  }, [user?.id]);
-
-  const userInitials = profile?.full_name
-    ? profile.full_name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .substring(0, 2)
-        .toUpperCase()
-    : user?.email
+  const userInitials = user?.email
     ? user.email.substring(0, 2).toUpperCase()
     : "GU"; // GU for Guest User
 
@@ -160,7 +138,7 @@ export const DashboardHeader = () => {
             <DropdownMenuLabel>
               <div className="flex flex-col space-y-1">
                 <p className="text-sm font-medium leading-none">
-                  {profile?.full_name || (user ? "My Account" : "Guest User")}
+                  {user ? "My Account" : "Guest User"}
                 </p>
                 <p className="text-xs leading-none text-muted-foreground">
                   {user?.email || "Not logged in"}

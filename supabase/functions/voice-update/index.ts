@@ -4,16 +4,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 200,
-      headers: corsHeaders
-    })
+    return new Response('ok', { headers: corsHeaders })
   }
 
   try {
@@ -41,84 +37,96 @@ serve(async (req) => {
       )
     }
 
-    // Get the notification preferences from the request body
-    const { 
-      userId, 
-      email_notifications, 
-      sms_notifications, 
-      marketing_emails,
-      login_alerts 
-    } = await req.json()
+    // Handle different HTTP methods
+    switch (req.method) {
+      case 'PUT':
+        return handlePutRequest(req, supabaseClient, user, corsHeaders)
+      default:
+        return new Response(
+          JSON.stringify({ error: 'Method not allowed' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 405 }
+        )
+    }
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
+    )
+  }
+})
 
-    // Validate that at least one notification preference is provided
-    if (
-      email_notifications === undefined && 
-      sms_notifications === undefined && 
-      marketing_emails === undefined &&
-      login_alerts === undefined
-    ) {
+// Handle PUT request - Update an existing voice record
+async function handlePutRequest(req, supabaseClient, user, corsHeaders) {
+  try {
+    const { id, updates } = await req.json()
+    
+    if (!id || !updates) {
       return new Response(
-        JSON.stringify({ error: 'At least one notification preference is required' }),
+        JSON.stringify({ error: 'Record ID and updates are required' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       )
     }
-
-    // Use the provided user ID or fall back to the authenticated user's ID
-    const targetUserId = userId || user.id
-
-    // Ensure the user can only update their own notification preferences unless they're an admin
-    if (targetUserId !== user.id) {
-      // Check if the user is an admin
+    
+    // First, check if the record exists and if the user has permission to update it
+    const { data: existingRecord, error: fetchError } = await supabaseClient
+      .from('voice_records')
+      .select('profile_id')
+      .eq('id', id)
+      .single()
+    
+    if (fetchError) {
+      if (fetchError.code === 'PGRST116') {
+        return new Response(
+          JSON.stringify({ error: 'Voice record not found' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
+        )
+      }
+      return new Response(
+        JSON.stringify({ error: fetchError.message }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+      )
+    }
+    
+    // Check if user has permission to update this record
+    if (existingRecord.profile_id !== user.id) {
+      // Check if user is an admin
       const { data: profile, error: profileError } = await supabaseClient
         .from('profiles')
         .select('role')
         .eq('id', user.id)
         .single()
-
+        
       if (profileError || !profile || profile.role !== 'admin') {
         return new Response(
-          JSON.stringify({ error: 'Forbidden: You can only update your own notification preferences' }),
+          JSON.stringify({ error: 'Forbidden: You can only update your own records' }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
         )
       }
     }
-
-    // Build the update object with only the provided preferences
-    const updates: any = { updated_at: new Date().toISOString() }
     
-    if (email_notifications !== undefined) updates.email_notifications = email_notifications
-    if (sms_notifications !== undefined) updates.sms_notifications = sms_notifications
-    if (marketing_emails !== undefined) updates.marketing_emails = marketing_emails
-    if (login_alerts !== undefined) updates.login_alerts = login_alerts
-
-    // Update the notification preferences
-    const { data: updatedProfile, error } = await supabaseClient
-      .from('profiles')
+    // Update the record
+    const { data: updatedRecord, error } = await supabaseClient
+      .from('voice_records')
       .update(updates)
-      .eq('id', targetUserId)
+      .eq('id', id)
       .select()
       .single()
-
+    
     if (error) {
       return new Response(
         JSON.stringify({ error: error.message }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       )
     }
-
+    
     return new Response(
-      JSON.stringify({ 
-        success: true,
-        profile: updatedProfile,
-        message: 'Notification preferences updated successfully'
-      }),
+      JSON.stringify({ record: updatedRecord }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ error: error.message }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
     )
   }
-})
+}

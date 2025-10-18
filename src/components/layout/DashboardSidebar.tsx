@@ -46,7 +46,13 @@ export const DashboardSidebar = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActiveClass = (url: string) => {
+    return `flex items-center gap-3 rounded-lg transition-colors duration-200 ${
+      location.pathname === url
+        ? "bg-white text-gray-900 font-bold shadow-sm border-l-4 border-indigo-600"
+        : "text-black hover:bg-indigo-50"
+    }`;
+  };
 
   const handleSignOut = () => {
     if (signOut) {
@@ -73,9 +79,10 @@ export const DashboardSidebar = () => {
           </div>
           {open && (
             <a
-              className="font-bold text-xl text-primary"
               href="/"
               target="_blank"
+              rel="noopener noreferrer"
+              className="font-bold text-xl text-black"
             >
               Client Dashboard
             </a>
@@ -88,7 +95,7 @@ export const DashboardSidebar = () => {
           <SidebarGroupLabel
             className={`${
               !open ? "sr-only" : ""
-            } text-indigo-900 dark:text-indigo-100 font-bold tracking-wide text-lg`}
+            } text-black font-bold tracking-wide text-lg`}
           >
             Main Menu
           </SidebarGroupLabel>
@@ -96,23 +103,22 @@ export const DashboardSidebar = () => {
             <SidebarMenu>
               {mainMenuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === item.url}
+                  >
                     <NavLink
                       to={item.url}
-                      className={({ isActive }) =>
-                        `flex items-center gap-3 text-black rounded-lg transition-colors duration-200 ${
-                          isActive
-                            ? "bg-indigo-600 text-white font-medium"
-                            : "text-black dark:text-gray-100 hover:bg-indigo-100 dark:hover:bg-indigo-800"
-                        }`
-                      }
+                      className={isActiveClass(item.url)}
                       onClick={(e) => {
                         // If not authenticated and trying to access protected routes
-                        // Allow access to dashboard and voice pages without authentication
+                        // Allow access to dashboard, voice, analytics, and help pages without authentication
                         if (
                           !user &&
                           item.url !== "/dashboard" &&
-                          item.url !== "/voice"
+                          item.url !== "/voice" &&
+                          item.url !== "/analytics" &&
+                          item.url !== "/help"
                         ) {
                           e.preventDefault();
                           navigate("/login");
@@ -138,7 +144,7 @@ export const DashboardSidebar = () => {
           <SidebarGroupLabel
             className={`${
               !open ? "sr-only" : ""
-            } text-indigo-900 dark:text-indigo-100 font-bold tracking-wide text-lg`}
+            } text-black font-bold tracking-wide text-lg`}
           >
             Account
           </SidebarGroupLabel>
@@ -146,16 +152,21 @@ export const DashboardSidebar = () => {
             <SidebarMenu>
               {secondaryMenuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === item.url}
+                  >
                     <NavLink
                       to={item.url}
-                      className={({ isActive }) =>
-                        `flex items-center text-black gap-3 rounded-lg transition-colors duration-200 ${
-                          isActive
-                            ? "bg-indigo-600 text-white font-medium"
-                            : "text-black dark:text-gray-100 hover:bg-indigo-100 dark:hover:bg-indigo-800"
-                        }`
-                      }
+                      className={isActiveClass(item.url)}
+                      onClick={(e) => {
+                        // If not authenticated and trying to access protected routes
+                        // Allow access to help page without authentication
+                        if (!user && item.url !== "/help") {
+                          e.preventDefault();
+                          navigate("/login");
+                        }
+                      }}
                     >
                       <item.icon className="h-4 w-4" />
                       {open && <span>{item.title}</span>}
@@ -174,7 +185,7 @@ export const DashboardSidebar = () => {
             <SidebarMenuButton asChild>
               <Button
                 variant="ghost"
-                className="w-full justify-start text-black dark:text-gray-100 hover:bg-indigo-100 dark:hover:bg-indigo-800 transition-colors duration-200 font-medium"
+                className="w-full justify-start text-black hover:bg-indigo-100 transition-colors duration-200 font-medium"
                 onClick={user ? handleSignOut : () => navigate("/login")}
               >
                 <LogOut className="h-4 w-4" />

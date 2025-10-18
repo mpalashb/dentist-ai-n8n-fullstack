@@ -4,12 +4,16 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+    return new Response(null, {
+      status: 200,
+      headers: corsHeaders
+    })
   }
 
   try {
@@ -56,11 +60,11 @@ serve(async (req) => {
       // Generate a unique file name
       const fileExt = file.name.split('.').pop()
       const fileName = `${user.id}-${Math.random().toString(36).substring(2)}.${fileExt}`
-      const filePath = `avatars/${fileName}`
+      const filePath = `profiles/${fileName}`
 
       // Upload the file to Supabase Storage
       const { data: uploadData, error: uploadError } = await supabaseClient.storage
-        .from('avatars')
+        .from('profiles')
         .upload(filePath, file, {
           cacheControl: '3600',
           upsert: false,
@@ -75,7 +79,7 @@ serve(async (req) => {
 
       // Get the public URL of the uploaded file
       const { data: publicUrlData } = supabaseClient.storage
-        .from('avatars')
+        .from('profiles')
         .getPublicUrl(filePath)
 
       avatarUrl = publicUrlData.publicUrl
@@ -120,8 +124,9 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: errorMessage }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
     )
   }

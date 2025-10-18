@@ -33,99 +33,86 @@ import {
   Loader2,
   Upload,
 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  getVoiceRecords,
+  getVoiceRecordsByStatus,
+  searchVoiceRecords,
+  type VoiceRecord,
+} from "@/services/voiceRecordService";
+import AudioPlayer from "@/components/AudioPlayer";
 
 const Transcripts = () => {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("all");
+  const [transcripts, setTranscripts] = useState<VoiceRecord[]>([]);
+  const [filteredTranscripts, setFilteredTranscripts] = useState<VoiceRecord[]>(
+    []
+  );
+  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(
+    null
+  );
 
-  // Simulate loading data
+  // Format time in seconds to MM:SS format
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+  };
+
+  // Fetch transcripts from Supabase
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []);
+    const fetchTranscripts = async () => {
+      if (!user) return;
 
-  const transcripts = [
-    {
-      id: 1,
-      name: "customer_call_001.mp3",
-      status: "completed",
-      uploadedAt: "2025-01-10 14:30",
-      duration: "5:23",
-      text: "Hello, I would like to inquire about your services...",
-      size: "2.4 MB",
-      words: 3245,
-      client: "Acme Corp",
-    },
-    {
-      id: 2,
-      name: "meeting_recording_jan9.wav",
-      status: "processing",
-      uploadedAt: "2025-01-09 09:15",
-      duration: "12:45",
-      text: null,
-      size: "1.8 MB",
-      words: 2456,
-      client: "Tech Solutions",
-    },
-    {
-      id: 3,
-      name: "voicemail_client_a.mp3",
-      status: "completed",
-      uploadedAt: "2025-01-08 16:20",
-      duration: "1:52",
-      text: "Hi, this is a follow-up on our previous conversation...",
-      size: "3.2 MB",
-      words: 4321,
-      client: "Global Industries",
-    },
-    {
-      id: 4,
-      name: "interview_transcript.mp3",
-      status: "failed",
-      uploadedAt: "2025-01-07 11:00",
-      duration: "8:30",
-      text: null,
-      size: "1.5 MB",
-      words: 1987,
-      client: "Innovate Inc",
-    },
-    {
-      id: 5,
-      name: "product_demo.mp3",
-      status: "completed",
-      uploadedAt: "2025-01-06 13:45",
-      duration: "28:19",
-      text: "Today I'll be demonstrating our new product features...",
-      size: "2.8 MB",
-      words: 3876,
-      client: "Customer Co",
-    },
-    {
-      id: 6,
-      name: "support_call.mp3",
-      status: "completed",
-      uploadedAt: "2025-01-05 10:30",
-      duration: "12:45",
-      text: "Thank you for calling our support line. How can I help you today?",
-      size: "1.2 MB",
-      words: 1654,
-      client: "Client XYZ",
-    },
-  ];
+      try {
+        setIsLoading(true);
+        const { records } = await getVoiceRecords();
+        setTranscripts(records);
+        setFilteredTranscripts(records);
+      } catch (error) {
+        console.error("Error fetching transcripts:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  const filteredTranscripts = transcripts.filter((transcript) => {
-    const matchesSearch =
-      transcript.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      transcript.client.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus =
-      statusFilter === "all" || transcript.status === statusFilter;
+    fetchTranscripts();
+  }, [user]);
 
-    return matchesSearch && matchesStatus;
-  });
+  // Filter transcripts based on search term and status
+  useEffect(() => {
+    const filterTranscripts = async () => {
+      if (!user) return;
+
+      try {
+        setIsLoading(true);
+        let records: VoiceRecord[] = [];
+
+        if (searchTerm) {
+          const result = await searchVoiceRecords(searchTerm);
+          records = result.records;
+        } else if (statusFilter !== "all") {
+          const result = await getVoiceRecordsByStatus(statusFilter);
+          records = result.records;
+        } else {
+          const result = await getVoiceRecords();
+          records = result.records;
+        }
+
+        setFilteredTranscripts(records);
+      } catch (error) {
+        console.error("Error filtering transcripts:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    filterTranscripts();
+  }, [searchTerm, statusFilter, user]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -167,7 +154,7 @@ const Transcripts = () => {
 
   const getTabCount = (status: string) => {
     if (status === "all") return transcripts.length;
-    return transcripts.filter((t) => t.status === status).length;
+    return transcripts.filter((t) => t.processing_status === status).length;
   };
 
   return (
@@ -272,51 +259,96 @@ const Transcripts = () => {
                 ) : (
                   <div className="space-y-4">
                     {filteredTranscripts.map((transcript) => (
-                      <div
-                        key={transcript.id}
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                            {getStatusIcon(transcript.status)}
-                          </div>
-                          <div>
-                            <h3 className="font-medium">{transcript.name}</h3>
-                            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                              <div className="flex items-center gap-1">
-                                <Calendar className="h-3 w-3" />
-                                <span>{transcript.uploadedAt}</span>
+                      <div key={transcript.id}>
+                        <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <div className="flex items-center gap-4">
+                            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                              {getStatusIcon(
+                                transcript.processing_status || "pending"
+                              )}
+                            </div>
+                            <div>
+                              <h3 className="font-medium">
+                                {transcript.title}
+                              </h3>
+                              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                                <div className="flex items-center gap-1">
+                                  <Calendar className="h-3 w-3" />
+                                  <span>
+                                    {new Date(
+                                      transcript.created_at
+                                    ).toLocaleString()}
+                                  </span>
+                                </div>
+                                <span>•</span>
+                                <span>
+                                  {formatTime(transcript.duration || 0)}
+                                </span>
+                                <span>•</span>
+                                <div className="flex items-center gap-1">
+                                  <User className="h-3 w-3" />
+                                  <span>
+                                    User {transcript.profile_id.substring(0, 8)}
+                                  </span>
+                                </div>
+                                <span>•</span>
+                                <span>
+                                  {transcript.file_size
+                                    ? (
+                                        transcript.file_size /
+                                        (1024 * 1024)
+                                      ).toFixed(2)
+                                    : "0.00"}{" "}
+                                  MB
+                                </span>
+                                <span>•</span>
+                                <span>
+                                  {transcript.transcript
+                                    ? transcript.transcript.split(" ").length
+                                    : 0}{" "}
+                                  words
+                                </span>
                               </div>
-                              <span>•</span>
-                              <span>{transcript.duration}</span>
-                              <span>•</span>
-                              <div className="flex items-center gap-1">
-                                <User className="h-3 w-3" />
-                                <span>{transcript.client}</span>
-                              </div>
-                              <span>•</span>
-                              <span>{transcript.size}</span>
-                              <span>•</span>
-                              <span>{transcript.words} words</span>
                             </div>
                           </div>
+                          <div className="flex items-center gap-2">
+                            {getStatusBadge(
+                              transcript.processing_status || "pending"
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Play"
+                              onClick={() =>
+                                setCurrentlyPlayingId(
+                                  currentlyPlayingId === transcript.id
+                                    ? null
+                                    : transcript.id
+                                )
+                              }
+                            >
+                              <Play className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" title="Download">
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="More options"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {getStatusBadge(transcript.status)}
-                          <Button variant="ghost" size="sm" title="Play">
-                            <Play className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" title="Download">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            title="More options"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        {currentlyPlayingId === transcript.id && (
+                          <div className="mt-2">
+                            <AudioPlayer
+                              audioUrl={transcript.file_url}
+                              title={transcript.title}
+                            />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Loader2 } from "lucide-react";
 import {
   Save,
   User as UserIcon,
@@ -12,6 +13,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Card,
   CardContent,
@@ -36,13 +38,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useAuth } from "@/contexts/AuthContext";
+import { useProfile } from "@/contexts/ProfileContext";
 import { toast } from "sonner";
 import {
   uploadProfilePicture,
   deleteProfilePicture,
 } from "@/lib/supabase-storage";
+import { uploadAvatar, deleteAvatar } from "@/services/profileService";
 import {
   getProfile,
+  getProfileViaEdgeFunction,
   createProfile,
   updateProfile,
   type Profile,
@@ -50,11 +55,14 @@ import {
 
 const Profile = () => {
   const { user } = useAuth();
+  const { profile: contextProfile, refreshProfile } = useProfile();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
+  const [tabLoading, setTabLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load profile data on component mount
@@ -62,7 +70,9 @@ const Profile = () => {
     const loadProfile = async () => {
       if (user?.id) {
         try {
-          const profileData = await getProfile(user.id);
+          // Use the context profile if available, otherwise fetch it
+          const profileData =
+            contextProfile || (await getProfileViaEdgeFunction(user.id));
 
           // If profile doesn't exist, create a default one
           if (!profileData) {
@@ -95,12 +105,14 @@ const Profile = () => {
         } catch (error) {
           console.error("Error loading profile:", error);
           toast.error("Failed to load profile data");
+        } finally {
+          setInitialLoading(false);
         }
       }
     };
 
     loadProfile();
-  }, [user?.id]);
+  }, [user?.id, contextProfile]);
 
   // Update profile state
   const updateProfileState = (updates: Partial<Profile>) => {
@@ -161,6 +173,8 @@ const Profile = () => {
 
       // Update the local state with the returned profile
       setProfile(updatedProfile);
+      // Refresh the profile context to update the avatar in the header
+      refreshProfile();
       toast.success("Profile updated successfully!");
     } catch (error) {
       console.error("Error updating profile:", error);
@@ -196,7 +210,8 @@ const Profile = () => {
 
     setUploading(true);
     try {
-      const publicUrl = await uploadProfilePicture(file, user.id);
+      // Use the edge function to upload the avatar
+      const publicUrl = await uploadAvatar(file, user.id);
 
       // Update the profile with the new avatar URL
       if (profile) {
@@ -227,6 +242,8 @@ const Profile = () => {
         setProfile(createdProfile);
       }
 
+      // Refresh the profile context to update the avatar in the header
+      refreshProfile();
       toast.success("Profile picture uploaded successfully!");
     } catch (error) {
       console.error("Error uploading profile picture:", error);
@@ -245,12 +262,17 @@ const Profile = () => {
   const handleRemovePicture = async () => {
     if (profile?.avatar_url && user?.id) {
       try {
-        // Extract the file path from the public URL
-        const filePath = profile.avatar_url.split("/profiles/")[1];
-        if (filePath) {
-          await deleteProfilePicture(profile.avatar_url);
-        }
-        updateProfileState({ avatar_url: null });
+        // Use the edge function to delete the avatar
+        await deleteAvatar(profile.avatar_url);
+
+        // Update the profile to remove the avatar URL
+        const updatedProfile = await updateProfile(user.id, {
+          ...profile,
+          avatar_url: null,
+        });
+        setProfile(updatedProfile);
+        // Refresh the profile context to update the avatar in the header
+        refreshProfile();
         toast.success("Profile picture removed");
       } catch (error) {
         console.error("Error removing profile picture:", error);
@@ -272,7 +294,42 @@ const Profile = () => {
           </p>
         </div>
 
-        {!profile ? (
+        {initialLoading ? (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-5 w-5" />
+                <Skeleton className="h-6 w-40" />
+              </div>
+              <Skeleton className="h-4 w-64" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex flex-col md:flex-row items-center gap-6">
+                  <Skeleton className="h-24 w-24 rounded-full" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-4 w-48" />
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-16" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-12" />
+                  <Skeleton className="h-20 w-full" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : !profile ? (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -280,53 +337,27 @@ const Profile = () => {
                 No Profile Found
               </CardTitle>
               <CardDescription>
-                You don't have any profile yet. Create one to get started.
+                You don't have any profile yet. Creating one now...
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button
-                onClick={async () => {
-                  if (!user?.id) return;
-
-                  setLoading(true);
-                  try {
-                    const newProfile: Omit<Profile, "updated_at"> = {
-                      id: user.id,
-                      username: null,
-                      full_name: null,
-                      avatar_url: null,
-                      website: null,
-                      phone: null,
-                      bio: null,
-                      location: null,
-                      email_notifications: true,
-                      sms_notifications: false,
-                      marketing_emails: true,
-                      two_factor_auth: false,
-                      login_alerts: true,
-                    };
-
-                    const createdProfile = await createProfile(newProfile);
-                    setProfile(createdProfile);
-                    toast.success("Profile created successfully!");
-                  } catch (error) {
-                    console.error("Error creating profile:", error);
-                    toast.error("Failed to create profile");
-                  } finally {
-                    setLoading(false);
-                  }
-                }}
-                disabled={loading}
-              >
-                {loading ? "Creating..." : "Create Profile"}
-              </Button>
+              <div className="flex justify-center py-4">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
             </CardContent>
           </Card>
         ) : (
           <>
             <Tabs
               value={activeTab}
-              onValueChange={setActiveTab}
+              onValueChange={(value) => {
+                setTabLoading(true);
+                setActiveTab(value);
+                // Simulate loading delay
+                setTimeout(() => {
+                  setTabLoading(false);
+                }, 800);
+              }}
               className="space-y-4"
             >
               <TabsList className="grid w-full grid-cols-3">
@@ -336,403 +367,431 @@ const Profile = () => {
               </TabsList>
 
               <TabsContent value="profile" className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <UserIcon className="h-5 w-5" />
-                      Personal Information
-                    </CardTitle>
-                    <CardDescription>
-                      Update your profile details and contact information
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="flex flex-col md:flex-row items-center gap-6">
-                      <div className="relative">
-                        <Avatar className="h-24 w-24">
-                          {profile?.avatar_url ? (
-                            <img
-                              src={profile.avatar_url}
-                              alt="Profile"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
-                              {userInitials}
-                            </AvatarFallback>
-                          )}
-                        </Avatar>
-                        <Button
-                          size="sm"
-                          className="absolute -bottom-2 -right-2 rounded-full h-8 w-8 p-0"
-                          onClick={handleUploadClick}
-                          disabled={uploading}
-                        >
-                          {uploading ? (
-                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                          ) : (
-                            <Camera className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          onChange={handleFileChange}
-                          className="hidden"
-                          accept="image/*"
-                        />
-                      </div>
-                      <div className="space-y-2 text-center md:text-left">
-                        <h3 className="text-lg font-medium">
-                          {profile?.full_name || "Your Name"}
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          {user?.email}
-                        </p>
-                        <div className="flex gap-2">
+                {tabLoading && activeTab === "profile" ? (
+                  <div className="flex justify-center items-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <UserIcon className="h-5 w-5" />
+                        Personal Information
+                      </CardTitle>
+                      <CardDescription>
+                        Update your profile details and contact information
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="flex flex-col md:flex-row items-center gap-6">
+                        <div className="relative">
+                          <Avatar className="h-24 w-24">
+                            {profile?.avatar_url ? (
+                              <img
+                                src={profile.avatar_url}
+                                alt="Profile"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
+                                {userInitials}
+                              </AvatarFallback>
+                            )}
+                          </Avatar>
                           <Button
-                            variant="outline"
                             size="sm"
+                            className="absolute -bottom-2 -right-2 rounded-full h-8 w-8 p-0"
                             onClick={handleUploadClick}
                             disabled={uploading}
-                            className="gap-1"
                           >
                             {uploading ? (
-                              <>
-                                <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                                Uploading...
-                              </>
+                              <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                             ) : (
-                              <>
-                                <Upload className="h-3 w-3" />
-                                {profile?.avatar_url
-                                  ? "Change Picture"
-                                  : "Upload Picture"}
-                              </>
+                              <Camera className="h-4 w-4" />
                             )}
                           </Button>
-                          {profile?.avatar_url && (
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileChange}
+                            className="hidden"
+                            accept="image/*"
+                          />
+                        </div>
+                        <div className="space-y-2 text-center md:text-left">
+                          <h3 className="text-lg font-medium">
+                            {profile?.full_name || "Your Name"}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {user?.email}
+                          </p>
+                          <div className="flex gap-2">
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={handleRemovePicture}
+                              onClick={handleUploadClick}
+                              disabled={uploading}
                               className="gap-1"
                             >
-                              <X className="h-3 w-3" />
-                              Remove
+                              {uploading ? (
+                                <>
+                                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                  Uploading...
+                                </>
+                              ) : (
+                                <>
+                                  <Upload className="h-3 w-3" />
+                                  {profile?.avatar_url
+                                    ? "Change Picture"
+                                    : "Upload Picture"}
+                                </>
+                              )}
                             </Button>
+                            {profile?.avatar_url && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleRemovePicture}
+                                className="gap-1"
+                              >
+                                <X className="h-3 w-3" />
+                                Remove
+                              </Button>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            JPG, PNG or GIF. Max size 10MB
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="email">Email</Label>
+                          <Input
+                            id="email"
+                            type="email"
+                            value={user?.email || ""}
+                            disabled
+                            className="bg-muted"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Email cannot be changed
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="fullName">Full Name</Label>
+                          <Input
+                            id="fullName"
+                            value={profile?.full_name || ""}
+                            onChange={(e) =>
+                              updateProfileState({ full_name: e.target.value })
+                            }
+                            placeholder="Enter your full name"
+                            className={errors.fullName ? "border-red-500" : ""}
+                          />
+                          {errors.fullName && (
+                            <p className="text-sm text-red-500">
+                              {errors.fullName}
+                            </p>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          JPG, PNG or GIF. Max size 10MB
-                        </p>
+                        <div className="space-y-2">
+                          <Label htmlFor="phone">Phone Number</Label>
+                          <Input
+                            id="phone"
+                            type="tel"
+                            value={profile?.phone || ""}
+                            onChange={(e) =>
+                              updateProfileState({ phone: e.target.value })
+                            }
+                            placeholder="+1 (555) 000-0000"
+                            className={errors.phone ? "border-red-500" : ""}
+                          />
+                          {errors.phone && (
+                            <p className="text-sm text-red-500">
+                              {errors.phone}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="location">Location</Label>
+                          <Input
+                            id="location"
+                            value={profile?.location || ""}
+                            onChange={(e) =>
+                              updateProfileState({ location: e.target.value })
+                            }
+                            placeholder="City, Country"
+                          />
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input
-                          id="email"
-                          type="email"
-                          value={user?.email || ""}
-                          disabled
-                          className="bg-muted"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Email cannot be changed
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="fullName">Full Name</Label>
-                        <Input
-                          id="fullName"
-                          value={profile?.full_name || ""}
+                        <Label htmlFor="bio">Bio</Label>
+                        <Textarea
+                          id="bio"
+                          value={profile?.bio || ""}
                           onChange={(e) =>
-                            updateProfileState({ full_name: e.target.value })
+                            updateProfileState({ bio: e.target.value })
                           }
-                          placeholder="Enter your full name"
-                          className={errors.fullName ? "border-red-500" : ""}
+                          placeholder="Tell us about yourself"
+                          rows={3}
                         />
-                        {errors.fullName && (
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="website">Website</Label>
+                        <Input
+                          id="website"
+                          type="url"
+                          value={profile?.website || ""}
+                          onChange={(e) =>
+                            updateProfileState({ website: e.target.value })
+                          }
+                          placeholder="https://yourwebsite.com"
+                          className={errors.website ? "border-red-500" : ""}
+                        />
+                        {errors.website && (
                           <p className="text-sm text-red-500">
-                            {errors.fullName}
+                            {errors.website}
                           </p>
                         )}
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="phone">Phone Number</Label>
-                        <Input
-                          id="phone"
-                          type="tel"
-                          value={profile?.phone || ""}
-                          onChange={(e) =>
-                            updateProfileState({ phone: e.target.value })
-                          }
-                          placeholder="+1 (555) 000-0000"
-                          className={errors.phone ? "border-red-500" : ""}
-                        />
-                        {errors.phone && (
-                          <p className="text-sm text-red-500">{errors.phone}</p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="location">Location</Label>
-                        <Input
-                          id="location"
-                          value={profile?.location || ""}
-                          onChange={(e) =>
-                            updateProfileState({ location: e.target.value })
-                          }
-                          placeholder="City, Country"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="bio">Bio</Label>
-                      <Textarea
-                        id="bio"
-                        value={profile?.bio || ""}
-                        onChange={(e) =>
-                          updateProfileState({ bio: e.target.value })
-                        }
-                        placeholder="Tell us about yourself"
-                        rows={3}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="website">Website</Label>
-                      <Input
-                        id="website"
-                        type="url"
-                        value={profile?.website || ""}
-                        onChange={(e) =>
-                          updateProfileState({ website: e.target.value })
-                        }
-                        placeholder="https://yourwebsite.com"
-                        className={errors.website ? "border-red-500" : ""}
-                      />
-                      {errors.website && (
-                        <p className="text-sm text-red-500">{errors.website}</p>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                )}
               </TabsContent>
 
               <TabsContent value="notifications" className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Bell className="h-5 w-5" />
-                      Notification Preferences
-                    </CardTitle>
-                    <CardDescription>
-                      Choose how you want to receive notifications
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="email-notifications">
-                          Email Notifications
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          Receive email updates for important events
-                        </p>
+                {tabLoading && activeTab === "notifications" ? (
+                  <div className="flex justify-center items-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Bell className="h-5 w-5" />
+                        Notification Preferences
+                      </CardTitle>
+                      <CardDescription>
+                        Choose how you want to receive notifications
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label htmlFor="email-notifications">
+                            Email Notifications
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Receive email updates for important events
+                          </p>
+                        </div>
+                        <Switch
+                          id="email-notifications"
+                          checked={profile?.email_notifications || false}
+                          onCheckedChange={(checked) =>
+                            updateProfileState({ email_notifications: checked })
+                          }
+                        />
                       </div>
-                      <Switch
-                        id="email-notifications"
-                        checked={profile?.email_notifications || false}
-                        onCheckedChange={(checked) =>
-                          updateProfileState({ email_notifications: checked })
-                        }
-                      />
-                    </div>
 
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="sms-notifications">
-                          SMS Notifications
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          Receive text messages for urgent alerts
-                        </p>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label htmlFor="sms-notifications">
+                            SMS Notifications
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Receive text messages for urgent alerts
+                          </p>
+                        </div>
+                        <Switch
+                          id="sms-notifications"
+                          checked={profile?.sms_notifications || false}
+                          onCheckedChange={(checked) =>
+                            updateProfileState({ sms_notifications: checked })
+                          }
+                        />
                       </div>
-                      <Switch
-                        id="sms-notifications"
-                        checked={profile?.sms_notifications || false}
-                        onCheckedChange={(checked) =>
-                          updateProfileState({ sms_notifications: checked })
-                        }
-                      />
-                    </div>
 
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="marketing-emails">
-                          Marketing Emails
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          Receive updates about new features and promotions
-                        </p>
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label htmlFor="marketing-emails">
+                            Marketing Emails
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Receive updates about new features and promotions
+                          </p>
+                        </div>
+                        <Switch
+                          id="marketing-emails"
+                          checked={profile?.marketing_emails || false}
+                          onCheckedChange={(checked) =>
+                            updateProfileState({ marketing_emails: checked })
+                          }
+                        />
                       </div>
-                      <Switch
-                        id="marketing-emails"
-                        checked={profile?.marketing_emails || false}
-                        onCheckedChange={(checked) =>
-                          updateProfileState({ marketing_emails: checked })
-                        }
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                )}
               </TabsContent>
 
               <TabsContent value="security" className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Shield className="h-5 w-5" />
-                      Security Settings
-                    </CardTitle>
-                    <CardDescription>
-                      Manage your account security and authentication
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="two-factor">
-                          Two-Factor Authentication
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          Add an extra layer of security to your account
-                        </p>
-                      </div>
-                      <Switch
-                        id="two-factor"
-                        checked={profile?.two_factor_auth || false}
-                        onCheckedChange={(checked) =>
-                          updateProfileState({ two_factor_auth: checked })
-                        }
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="login-alerts">Login Alerts</Label>
-                        <p className="text-sm text-muted-foreground">
-                          Get notified when someone logs into your account
-                        </p>
-                      </div>
-                      <Switch
-                        id="login-alerts"
-                        checked={profile?.login_alerts || false}
-                        onCheckedChange={(checked) =>
-                          updateProfileState({ login_alerts: checked })
-                        }
-                      />
-                    </div>
-
-                    <div className="pt-4 border-t space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label>Password</Label>
-                          <p className="text-sm text-muted-foreground">
-                            Last changed 30 days ago
-                          </p>
+                {tabLoading && activeTab === "security" ? (
+                  <div className="flex justify-center items-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : (
+                  <>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Shield className="h-5 w-5" />
+                          Security Settings
+                        </CardTitle>
+                        <CardDescription>
+                          Manage your account security and authentication
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label htmlFor="two-factor">
+                              Two-Factor Authentication
+                            </Label>
+                            <p className="text-sm text-muted-foreground">
+                              Add an extra layer of security to your account
+                            </p>
+                          </div>
+                          <Switch
+                            id="two-factor"
+                            checked={profile?.two_factor_auth || false}
+                            onCheckedChange={(checked) =>
+                              updateProfileState({ two_factor_auth: checked })
+                            }
+                          />
                         </div>
-                        <Button variant="outline" size="sm" className="gap-2">
-                          <Key className="h-4 w-4" />
-                          Change Password
-                        </Button>
-                      </div>
 
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label>Connected Devices</Label>
-                          <p className="text-sm text-muted-foreground">
-                            3 devices currently active
-                          </p>
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label htmlFor="login-alerts">Login Alerts</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Get notified when someone logs into your account
+                            </p>
+                          </div>
+                          <Switch
+                            id="login-alerts"
+                            checked={profile?.login_alerts || false}
+                            onCheckedChange={(checked) =>
+                              updateProfileState({ login_alerts: checked })
+                            }
+                          />
                         </div>
-                        <Button variant="outline" size="sm">
-                          Manage Devices
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Smartphone className="h-5 w-5" />
-                      Active Sessions
-                    </CardTitle>
-                    <CardDescription>
-                      Manage your active sessions across devices
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-4">
-                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <Smartphone className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <h3 className="font-medium">Chrome on Windows</h3>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <span>San Francisco, CA</span>
-                            <span>•</span>
-                            <span>Current session</span>
+                        <div className="pt-4 border-t space-y-4">
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                              <Label>Password</Label>
+                              <p className="text-sm text-muted-foreground">
+                                Last changed 30 days ago
+                              </p>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-2"
+                            >
+                              <Key className="h-4 w-4" />
+                              Change Password
+                            </Button>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                              <Label>Connected Devices</Label>
+                              <p className="text-sm text-muted-foreground">
+                                3 devices currently active
+                              </p>
+                            </div>
+                            <Button variant="outline" size="sm">
+                              Manage Devices
+                            </Button>
                           </div>
                         </div>
-                      </div>
-                      <Badge variant="outline">Current</Badge>
-                    </div>
+                      </CardContent>
+                    </Card>
 
-                    <div className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-4">
-                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <Smartphone className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <h3 className="font-medium">Safari on iPhone</h3>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <span>New York, NY</span>
-                            <span>•</span>
-                            <span>Last active 2 hours ago</span>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Smartphone className="h-5 w-5" />
+                          Active Sessions
+                        </CardTitle>
+                        <CardDescription>
+                          Manage your active sessions across devices
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="flex items-center justify-between p-4 border rounded-lg">
+                          <div className="flex items-center gap-4">
+                            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                              <Smartphone className="h-5 w-5 text-primary" />
+                            </div>
+                            <div>
+                              <h3 className="font-medium">Chrome on Windows</h3>
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <span>San Francisco, CA</span>
+                                <span>•</span>
+                                <span>Current session</span>
+                              </div>
+                            </div>
                           </div>
+                          <Badge variant="outline">Current</Badge>
                         </div>
-                      </div>
-                      <Button variant="outline" size="sm">
-                        Revoke
-                      </Button>
-                    </div>
 
-                    <div className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-4">
-                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <Smartphone className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <h3 className="font-medium">Firefox on macOS</h3>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <span>London, UK</span>
-                            <span>•</span>
-                            <span>Last active 3 days ago</span>
+                        <div className="flex items-center justify-between p-4 border rounded-lg">
+                          <div className="flex items-center gap-4">
+                            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                              <Smartphone className="h-5 w-5 text-primary" />
+                            </div>
+                            <div>
+                              <h3 className="font-medium">Safari on iPhone</h3>
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <span>New York, NY</span>
+                                <span>•</span>
+                                <span>Last active 2 hours ago</span>
+                              </div>
+                            </div>
                           </div>
+                          <Button variant="outline" size="sm">
+                            Revoke
+                          </Button>
                         </div>
-                      </div>
-                      <Button variant="outline" size="sm">
-                        Revoke
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
+
+                        <div className="flex items-center justify-between p-4 border rounded-lg">
+                          <div className="flex items-center gap-4">
+                            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                              <Smartphone className="h-5 w-5 text-primary" />
+                            </div>
+                            <div>
+                              <h3 className="font-medium">Firefox on macOS</h3>
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <span>London, UK</span>
+                                <span>•</span>
+                                <span>Last active 3 days ago</span>
+                              </div>
+                            </div>
+                          </div>
+                          <Button variant="outline" size="sm">
+                            Revoke
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </>
+                )}
               </TabsContent>
             </Tabs>
 

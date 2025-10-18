@@ -19,46 +19,57 @@ import {
   Save,
   Clock,
   Volume2,
+  Loader2,
 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  getVoiceRecords,
+  getVoiceRecordsByProfile,
+  createVoiceRecord,
+  uploadAudioFile,
+  deleteVoiceRecord,
+  type VoiceRecord,
+} from "@/services/voiceRecordService";
+import AudioPlayer from "@/components/AudioPlayer";
 
 const Voice = () => {
+  const { user } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [recordings, setRecordings] = useState<any[]>([]);
+  const [recordings, setRecordings] = useState<VoiceRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(
+    null
+  );
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize recordings with mock data
+  // Fetch recordings from Supabase
+  const fetchRecordings = async () => {
+    if (!user) return;
+
+    try {
+      setIsLoading(true);
+      const { records } = await getVoiceRecordsByProfile(user.id);
+      setRecordings(records);
+    } catch (error) {
+      console.error("Error fetching recordings:", error);
+      // Show user-friendly error message
+      alert("Failed to load your voice recordings. Please try again later.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    setRecordings([
-      {
-        id: 1,
-        name: "Meeting Notes",
-        date: "2025-01-10",
-        duration: "5:23",
-        size: "2.4 MB",
-      },
-      {
-        id: 2,
-        name: "Client Call",
-        date: "2025-01-09",
-        duration: "12:45",
-        size: "1.8 MB",
-      },
-      {
-        id: 3,
-        name: "Voice Memo",
-        date: "2025-01-08",
-        duration: "1:52",
-        size: "3.2 MB",
-      },
-    ]);
-  }, []);
+    fetchRecordings();
+  }, [user]);
 
   // Start recording
   const startRecording = async () => {
@@ -126,29 +137,76 @@ const Voice = () => {
   };
 
   // Save recording
-  const saveRecording = () => {
-    if (recordedAudio && audioUrl) {
-      const newRecording = {
-        id: recordings.length + 1,
-        name: `Recording ${recordings.length + 1}`,
-        date: new Date().toISOString().split("T")[0],
-        duration: formatTime(recordingTime),
-        size: `${(recordedAudio.size / (1024 * 1024)).toFixed(2)} MB`,
-      };
-      setRecordings([newRecording, ...recordings]);
+  const saveRecording = async () => {
+    if (!user || !recordedAudio) return;
+
+    try {
+      setIsSaving(true);
+
+      // Upload the audio file to Supabase storage using the voice-upload edge function
+      const audioFile = new File(
+        [recordedAudio],
+        `recording-${Date.now()}.wav`,
+        {
+          type: "audio/wav",
+        }
+      );
+
+      const title = `Recording ${recordings.length + 1}`;
+      const { record } = await uploadAudioFile(audioFile, title);
+
+      // Add the new record to the list
+      setRecordings([record, ...recordings]);
 
       // Reset recording state
       setRecordedAudio(null);
       setAudioUrl(null);
       setRecordingTime(0);
+
+      // Refresh the recordings list
+      fetchRecordings();
+    } catch (error) {
+      console.error("Error saving recording:", error);
+      alert("Failed to save recording. Please try again.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  // Delete recording
+  // Delete recording (current unsaved recording)
   const deleteRecording = () => {
     setRecordedAudio(null);
     setAudioUrl(null);
     setRecordingTime(0);
+  };
+
+  // Handle delete saved recording
+  const handleDeleteRecording = async (id: string) => {
+    if (!user) return;
+
+    try {
+      // Delete the voice record using the edge function
+      await deleteVoiceRecord(id);
+
+      // Remove the record from the list
+      setRecordings(recordings.filter((recording) => recording.id !== id));
+    } catch (error) {
+      console.error("Error deleting recording:", error);
+      alert("Failed to delete recording. Please try again.");
+    }
+  };
+
+  // Handle download recording
+  const handleDownloadRecording = (recording: VoiceRecord) => {
+    if (!recording.file_url) return;
+
+    // Create a temporary anchor element to trigger the download
+    const link = document.createElement("a");
+    link.href = recording.file_url;
+    link.download = `${recording.title || "recording"}.wav`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Format time (seconds to MM:SS)
@@ -305,31 +363,70 @@ const Voice = () => {
               ) : (
                 <div className="space-y-4">
                   {recordings.map((recording) => (
-                    <div
-                      key={recording.id}
-                      className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
-                    >
-                      <div>
-                        <h3 className="font-medium">{recording.name}</h3>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span>{recording.date}</span>
-                          <span>•</span>
-                          <span>{recording.duration}</span>
-                          <span>•</span>
-                          <span>{recording.size}</span>
+                    <div key={recording.id}>
+                      <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                        <div>
+                          <h3 className="font-medium">{recording.title}</h3>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <span>
+                              {new Date(
+                                recording.created_at
+                              ).toLocaleDateString()}
+                            </span>
+                            <span>•</span>
+                            <span>{formatTime(recording.duration || 0)}</span>
+                            <span>•</span>
+                            <span>
+                              {recording.file_size
+                                ? (recording.file_size / (1024 * 1024)).toFixed(
+                                    2
+                                  )
+                                : "0.00"}{" "}
+                              MB
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Play"
+                            onClick={() =>
+                              setCurrentlyPlayingId(
+                                currentlyPlayingId === recording.id
+                                  ? null
+                                  : recording.id
+                              )
+                            }
+                          >
+                            <Play className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Download"
+                            onClick={() => handleDownloadRecording(recording)}
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Delete"
+                            onClick={() => handleDeleteRecording(recording.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm" title="Play">
-                          <Play className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" title="Download">
-                          <Download className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" title="Delete">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      {currentlyPlayingId === recording.id && (
+                        <div className="mt-2">
+                          <AudioPlayer
+                            audioUrl={recording.file_url}
+                            title={recording.title}
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -10,13 +10,13 @@ export const uploadProfilePicture = async (file: File, userId: string) => {
   try {
     // Create a unique file name
     const fileExt = file.name.split(".").pop();
-    const fileName = `${userId}-${Date.now()}.${fileExt}`;
-    // Use a folder structure that matches typical RLS policies (public/userId/filename)
-    const filePath = `public/${userId}/${fileName}`;
+    const fileName = `${userId}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+    // Use the same path structure as the edge function
+    const filePath = `avatars/${fileName}`;
 
-    // Upload the file to the 'profiles' bucket
+    // Upload the file to the 'avatars' bucket
     const { data, error } = await supabaseStorage.storage
-      .from("profiles")
+      .from("avatars")
       .upload(filePath, file, {
         cacheControl: "3600",
         upsert: false,
@@ -28,7 +28,7 @@ export const uploadProfilePicture = async (file: File, userId: string) => {
 
     // Get the public URL of the uploaded file
     const { data: publicUrlData } = supabaseStorage.storage
-      .from("profiles")
+      .from("avatars")
       .getPublicUrl(filePath);
 
     return publicUrlData.publicUrl;
@@ -45,12 +45,18 @@ export const uploadProfilePicture = async (file: File, userId: string) => {
 export const deleteProfilePicture = async (filePath: string) => {
   try {
     // Extract the full path from the URL if needed
-    const fullPath = filePath.includes("/profiles/")
-      ? filePath.split("/profiles/")[1]
-      : filePath;
+    let fullPath;
+    if (filePath.includes("/avatars/")) {
+      fullPath = filePath.split("/avatars/")[1];
+    } else if (filePath.includes("/profiles/")) {
+      // For backward compatibility with old URLs
+      fullPath = filePath.split("/profiles/")[1];
+    } else {
+      fullPath = filePath;
+    }
 
     const { error } = await supabaseStorage.storage
-      .from("profiles")
+      .from("avatars")
       .remove([fullPath]);
 
     if (error) {

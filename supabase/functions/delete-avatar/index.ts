@@ -41,61 +41,61 @@ serve(async (req) => {
       )
     }
 
-    // Get the profile data from the request body
-    const { profile } = await req.json()
+    // Get the avatar URL from the request body
+    const { avatarUrl } = await req.json()
 
-    if (!profile) {
+    if (!avatarUrl) {
       return new Response(
-        JSON.stringify({ error: 'Profile data is required' }),
+        JSON.stringify({ error: 'Avatar URL is required' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       )
     }
 
-    // Ensure the profile ID matches the authenticated user's ID
-    if (profile.id && profile.id !== user.id) {
+    // Extract the file path from the URL
+    let filePath
+    if (avatarUrl.includes('/profiles/')) {
+      filePath = avatarUrl.split('/profiles/')[1]
+    } else if (avatarUrl.includes('/profiles/')) {
+      // For backward compatibility with old URLs
+      filePath = avatarUrl.split('/profiles/')[1]
+    } else {
+      filePath = avatarUrl
+    }
+
+    // Delete the file from Supabase Storage
+    const { error: deleteError } = await supabaseClient.storage
+      .from('profiles')
+      .remove([filePath])
+
+    if (deleteError) {
       return new Response(
-        JSON.stringify({ error: 'Cannot create a profile for another user' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
+        JSON.stringify({ error: deleteError.message }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       )
     }
 
-    // Set the ID to the authenticated user's ID if not provided
-    const profileToCreate = {
-      ...profile,
-      id: user.id,
-    }
-
-    // Create the profile
-    const { data: newProfile, error } = await supabaseClient
+    // Update the user's profile to remove the avatar URL
+    const { error: updateError } = await supabaseClient
       .from('profiles')
-      .insert([profileToCreate])
-      .select()
-      .single()
+      .update({ 
+        avatar_url: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', user.id)
 
-    if (error) {
-      // If the error is a duplicate key error (profile already exists), return the existing profile
-      if (error.code === '23505') {
-        const { data: existingProfile } = await supabaseClient
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-          
-        return new Response(
-          JSON.stringify({ profile: existingProfile, message: 'Profile already exists' }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-        )
-      }
-      
+    if (updateError) {
       return new Response(
-        JSON.stringify({ error: error.message }),
+        JSON.stringify({ error: updateError.message }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
       )
     }
 
     return new Response(
-      JSON.stringify({ profile: newProfile }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 201 }
+      JSON.stringify({ 
+        success: true,
+        message: 'Avatar deleted successfully'
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
