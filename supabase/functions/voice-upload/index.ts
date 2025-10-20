@@ -159,8 +159,43 @@ async function handleFileUpload(req, supabaseClient, user, corsHeaders) {
       )
     }
     
+    // Get N8N webhook URL from environment secrets
+    const n8nWebhookUrl = Deno.env.get('N8N_WEBHOOK_URL')
+    
+    if (n8nWebhookUrl) {
+      try {
+        // Create a new FormData to send to N8N
+        const n8nFormData = new FormData()
+        n8nFormData.append('file', file)
+        n8nFormData.append('record_id', record.id)
+        n8nFormData.append('user_id', user.id)
+        n8nFormData.append('title', title)
+        n8nFormData.append('file_url', publicUrlData.publicUrl)
+        
+        if (description) {
+          n8nFormData.append('description', description)
+        }
+        
+        // Send the data to N8N webhook
+        const n8nResponse = await fetch(n8nWebhookUrl, {
+          method: 'POST',
+          body: n8nFormData,
+          headers: {
+            // Don't set Content-Type header when using FormData, let the browser set it with the correct boundary
+          }
+        })
+        
+        if (!n8nResponse.ok) {
+          console.error('N8N webhook error:', await n8nResponse.text())
+        }
+      } catch (n8nError) {
+        console.error('Error sending data to N8N webhook:', n8nError)
+        // We don't fail the whole operation if N8N webhook fails
+      }
+    }
+    
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         record,
         file: {
           path: uploadData.path,
